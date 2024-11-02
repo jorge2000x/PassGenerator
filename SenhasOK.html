@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Gerador de Senhas Derivadas com Argon2</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/argon2-browser/1.18.0/argon2-bundled.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+        }
+        .container {
+            background-color: #f5f5f5;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .input-group {
+            margin-bottom: 1rem;
+        }
+        input {
+            padding: 0.5rem;
+            width: 100%;
+            margin-top: 0.5rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .password-list {
+            margin-top: 1rem;
+        }
+        .password-item {
+            background-color: white;
+            padding: 0.5rem;
+            margin: 0.5rem 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .copy-button {
+            background-color: #28a745;
+            font-size: 0.8rem;
+            padding: 0.25rem 0.5rem;
+        }
+        .error {
+            color: red;
+            margin-top: 0.5rem;
+        }
+        .loading {
+            display: none;
+            margin-top: 1rem;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Gerador de Senhas Derivadas</h1>
+        
+        <div class="input-group">
+            <label for="masterPassword">Senha Mestre (12-32 caracteres alfanuméricos):</label>
+            <input type="password" id="masterPassword" placeholder="Digite sua senha mestre">
+        </div>
+
+        <div id="error" class="error"></div>
+        <button onclick="generatePasswords()" id="generateButton">Gerar Senhas</button>
+        <div id="loading" class="loading">Gerando senhas... Por favor, aguarde.</div>
+        <div id="passwordList" class="password-list"></div>
+    </div>
+
+    <script>
+        // Configurações fixas do Argon2
+        const ARGON2_TIME_COST = 3;  // 3 iterações
+        const ARGON2_MEMORY_COST = 49152;  // 48MB (49152 KB)
+
+        // Função para converter array de bytes em string hexadecimal
+        function bytesToHex(bytes) {
+            return Array.from(bytes)
+                .map(b => b.toString(16).padStart(2, '0'))
+                .join('');
+        }
+
+        // Função para gerar salt determinístico baseado na senha mestre
+        async function generateDeterministicSalt(masterPassword, index) {
+            // Concatena a senha mestre com o índice para gerar salts únicos
+            const input = new TextEncoder().encode(masterPassword + index.toString());
+            
+            // Gera o hash SHA-256
+            const hashBuffer = await crypto.subtle.digest('SHA-256', input);
+            
+            // Retorna os primeiros 16 bytes do hash como salt
+            return new Uint8Array(hashBuffer).slice(0, 16);
+        }
+
+        async function generatePasswords() {
+            const masterPassword = document.getElementById('masterPassword').value;
+            const error = document.getElementById('error');
+            const passwordList = document.getElementById('passwordList');
+            const loading = document.getElementById('loading');
+            const generateButton = document.getElementById('generateButton');
+            
+            // Validação da senha mestre
+            if (!/^[a-zA-Z0-9]{12,32}$/.test(masterPassword)) {
+                error.textContent = 'A senha mestre deve ter entre 12 e 32 caracteres alfanuméricos';
+                passwordList.innerHTML = '';
+                return;
+            }
+            
+            error.textContent = '';
+            passwordList.innerHTML = '';
+            loading.style.display = 'block';
+            generateButton.disabled = true;
+
+            try {
+                // Gerar 8 senhas diferentes
+                const passwords = [];
+                for (let i = 0; i < 8; i++) {
+                    // Gerar salt determinístico para este índice
+                    const salt = await generateDeterministicSalt(masterPassword, i);
+                    
+                    // Usar Argon2id para derivar a chave
+                    const hash = await argon2.hash({
+                        pass: masterPassword,
+                        salt: salt,
+                        time: ARGON2_TIME_COST,
+                        mem: ARGON2_MEMORY_COST,
+                        hashLen: 32,
+                        type: argon2.ArgonType.Argon2id
+                    });
+
+                    // Converter o hash em uma senha de 22 caracteres
+                    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+                    const bytes = new Uint8Array(hash.hash);
+                    let password = '';
+                    for (let j = 0; j < 22; j++) {
+                        password += chars[bytes[j] % chars.length];
+                    }
+
+                    passwords.push({ password });
+                }
+
+                // Exibir as senhas
+                passwords.forEach(({ password }, i) => {
+                    const passwordItem = document.createElement('div');
+                    passwordItem.className = 'password-item';
+                    passwordItem.innerHTML = `
+                        <div>Senha ${i + 1}: ${password}</div>
+                        <button class="copy-button" onclick="copyToClipboard('${password}')">Copiar</button>
+                    `;
+                    passwordList.appendChild(passwordItem);
+                });
+            } catch (err) {
+                error.textContent = 'Erro ao gerar as senhas: ' + err.message;
+            } finally {
+                loading.style.display = 'none';
+                generateButton.disabled = false;
+            }
+        }
+
+        async function copyToClipboard(text) {
+            try {
+                await navigator.clipboard.writeText(text);
+                alert('Senha copiada para a área de transferência!');
+            } catch (err) {
+                alert('Erro ao copiar senha: ' + err.message);
+            }
+        }
+    </script>
+</body>
+</html>
